@@ -647,6 +647,8 @@ export class SelectInnerArgument extends TextObjectMovement {
   keys = ['i', 'a'];
 
   public async execAction(position: Position, vimState: VimState): Promise<IMovement> {
+    // Depending on the language or context, it may be useful to have
+    // custom delimiters, such as ';' or '{}'
     let openingDelimiters = ['(', '['];
     let closingDelimiters = [')', ']'];
     let delimiters = [','];
@@ -665,22 +667,22 @@ export class SelectInnerArgument extends TextObjectMovement {
     }
 
     // Procedure:
-    // Ensure that below example still works, i.e. when we have nested pairs
-    // of parens
-    //        ( a, b, (void*)| c(void*, void*), a)
+    // Requirement is that below example still works as expected, i.e.
+    // when we have nested pairs of parens
+    //
+    //        ( a, b, (void*) | c(void*, void*), a)
+    //
     // 1. Walk left until we find a comma or an opening paren, that does not
     //    have a matching closed one. This way we can ignore pairs
     //    of parentheses which belong to the current argument.
     // 2. Vice versa for walking right.
 
-    /// Backwards search
+    /**
+     * Backwards search
+     */
     let leftDelimiterPosition: Position | null = null;
     let leftWalkPos = position;
     let closedParensCount = 0;
-
-    // Edge case, for when the cursor is on a delimiter already,
-    // we want to use the next argument. So use this delimiter as
-    // the left one and skip the search.
     while (!leftWalkPos.isAtDocumentBegin()) {
       let char = TextEditor.getCharAt(leftWalkPos);
       if (closedParensCount === 0) {
@@ -700,7 +702,9 @@ export class SelectInnerArgument extends TextObjectMovement {
       leftWalkPos = leftWalkPos.getLeftThroughLineBreaks();
     }
 
-    /// Forwards search
+    /**
+     * Forwards search
+     */
     let rightDelimiterPosition: Position | null = null;
     let rightWalkPos = position;
     let openedParensCount = 0;
