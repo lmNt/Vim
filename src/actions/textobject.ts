@@ -640,3 +640,68 @@ class InsideIndentObjectBoth extends IndentObjectMatch {
   includeLineAbove = true;
   includeLineBelow = true;
 }
+
+@RegisterAction
+export class SelectInnerArgument extends TextObjectMovement {
+  modes = [Mode.Normal, Mode.Visual];
+  keys = ['i', 'a'];
+
+  public async execAction(position: Position, vimState: VimState): Promise<IMovement> {
+    let start: Position;
+    let stop: Position;
+    const currentChar = TextEditor.getLineAt(position).text[position.character];
+
+    let delimiters = [',', '(', ')', '[', ']'];
+
+    let searchBackwards = function(startPosition: Position, delimiter) {
+      let pos = startPosition.getLeftThroughLineBreaks();
+      while (true) {
+        let char = TextEditor.getCharAt(pos);
+        if (pos.isAtDocumentBegin()) {
+          return null;
+        }
+        if (delimiter.includes(char)) {
+          return pos;
+        }
+        pos = pos.getLeftThroughLineBreaks();
+      }
+    };
+    let searchForwards = function(startPosition: Position, delimiter) {
+      let pos = startPosition.getRightThroughLineBreaks(true);
+      while (true) {
+        let char = TextEditor.getCharAt(pos);
+        if (pos.isAtDocumentEnd()) {
+          return null;
+        }
+        if (delimiter.includes(char)) {
+          return pos;
+        }
+        pos = pos.getRightThroughLineBreaks(true);
+      }
+    };
+
+    start = searchBackwards(position, delimiters) ?? position;
+    stop = searchForwards(position, delimiters) ?? position;
+    console.log(start);
+    console.log(stop);
+
+    // let prevBoundary =
+    //   position.findBackwards(',')?.getRight() ?? position.findBackwards('(')?.getRight();
+    // let nextBoundary =
+    //   position.findForwards(',')?.getLeft() ?? position.findForwards(')')?.getLeft();
+
+    //   position.
+
+    // if (prevBoundary != null && nextBoundary != null) {
+    //   return {
+    //     start: prevBoundary,
+    //     stop: nextBoundary,
+    //   };
+    // }
+
+    return {
+      start: start.getRight(),
+      stop: stop.getLeft(),
+    };
+  }
+}
