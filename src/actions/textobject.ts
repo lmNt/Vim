@@ -647,61 +647,86 @@ export class SelectInnerArgument extends TextObjectMovement {
   keys = ['i', 'a'];
 
   public async execAction(position: Position, vimState: VimState): Promise<IMovement> {
-    let start: Position;
-    let stop: Position;
-    const currentChar = TextEditor.getLineAt(position).text[position.character];
+    let openingDelimiters = ['(', '['];
+    let closingDelimiters = [')', ']'];
+    let delimiters = [','];
 
-    let delimiters = [',', '(', ')', '[', ']'];
+    // TODO:
+    // * Inconsistencies when cursor at (opening/closing) delimiters,
+    //   however I am not sure which behaviour is sensible.
+    // * Ensure that multiline behaviour is nicer
+    // * Implement the *around* argument movement
 
-    let searchBackwards = function(startPosition: Position, delimiter) {
-      let pos = startPosition.getLeftThroughLineBreaks();
-      while (true) {
-        let char = TextEditor.getCharAt(pos);
-        if (pos.isAtDocumentBegin()) {
-          return null;
+    if (delimiters.includes(TextEditor.getCharAt(position))) {
+      return {
+        start: position,
+        stop: position,
+      };
+    }
+
+    // Procedure:
+    // Ensure that below example still works, i.e. when we have nested pairs
+    // of parens
+    //        ( a, b, (void*)| c(void*, void*), a)
+    // 1. Walk left until we find a comma or an opening paren, that does not
+    //    have a matching closed one. This way we can ignore pairs
+    //    of parentheses which belong to the current argument.
+    // 2. Vice versa for walking right.
+
+    /// Backwards search
+    let leftDelimiterPosition: Position | null = null;
+    let leftWalkPos = position;
+    let closedParensCount = 0;
+
+    // Edge case, for when the cursor is on a delimiter already,
+    // we want to use the next argument. So use this delimiter as
+    // the left one and skip the search.
+    while (!leftWalkPos.isAtDocumentBegin()) {
+      let char = TextEditor.getCharAt(leftWalkPos);
+      if (closedParensCount === 0) {
+        if (openingDelimiters.includes(char) || delimiters.includes(char)) {
+          // We have found the left most delimiter or the first proper delimiter
+          // in our cursor's list 'depth' and thus can abort.
+          leftDelimiterPosition = leftWalkPos;
+          break;
         }
-        if (delimiter.includes(char)) {
-          return pos;
-        }
-        pos = pos.getLeftThroughLineBreaks();
       }
-    };
-    let searchForwards = function(startPosition: Position, delimiter) {
-      let pos = startPosition.getRightThroughLineBreaks(true);
-      while (true) {
-        let char = TextEditor.getCharAt(pos);
-        if (pos.isAtDocumentEnd()) {
-          return null;
-        }
-        if (delimiter.includes(char)) {
-          return pos;
-        }
-        pos = pos.getRightThroughLineBreaks(true);
+      if (closingDelimiters.includes(char)) {
+        closedParensCount++;
       }
-    };
+      if (openingDelimiters.includes(char)) {
+        closedParensCount--;
+      }
+      leftWalkPos = leftWalkPos.getLeftThroughLineBreaks();
+    }
 
-    start = searchBackwards(position, delimiters) ?? position;
-    stop = searchForwards(position, delimiters) ?? position;
-    console.log(start);
-    console.log(stop);
+    /// Forwards search
+    let rightDelimiterPosition: Position | null = null;
+    let rightWalkPos = position;
+    let openedParensCount = 0;
 
-    // let prevBoundary =
-    //   position.findBackwards(',')?.getRight() ?? position.findBackwards('(')?.getRight();
-    // let nextBoundary =
-    //   position.findForwards(',')?.getLeft() ?? position.findForwards(')')?.getLeft();
-
-    //   position.
-
-    // if (prevBoundary != null && nextBoundary != null) {
-    //   return {
-    //     start: prevBoundary,
-    //     stop: nextBoundary,
-    //   };
-    // }
+    while (!rightWalkPos.isAtDocumentEnd()) {
+      let char = TextEditor.getCharAt(rightWalkPos);
+      if (openedParensCount === 0) {
+        if (closingDelimiters.includes(char) || delimiters.includes(char)) {
+          rightDelimiterPosition = rightWalkPos;
+          break;
+        }
+      }
+      if (openingDelimiters.includes(char)) {
+        openedParensCount++;
+      }
+      if (closingDelimiters.includes(char)) {
+        openedParensCount--;
+      }
+      // We need to include the EOL so that isAtDocumentEnd actually
+      // becomes true.
+      rightWalkPos = rightWalkPos.getRightThroughLineBreaks(true);
+    }
 
     return {
-      start: start.getRight(),
-      stop: stop.getLeft(),
+      start: leftDelimiterPosition?.getRight() ?? position,
+      stop: rightDelimiterPosition?.getLeft() ?? position,
     };
   }
 }
