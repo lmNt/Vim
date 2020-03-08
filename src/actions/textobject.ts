@@ -17,6 +17,8 @@ import {
   ExpandingSelection,
 } from './motion';
 import { ChangeOperator } from './operator';
+import { fail } from 'assert';
+import { ConsoleForElectron } from 'winston-console-for-electron';
 
 export abstract class TextObjectMovement extends BaseMovement {
   modes = [Mode.Normal, Mode.Visual, Mode.VisualBlock];
@@ -669,66 +671,104 @@ abstract class SelectArgument extends TextObjectMovement {
   //     locations for most consistent behaviour, especially in case of
   //     multi-line statements.
 
-  // TODO:
-  // * Weird cursor position when starting on delimiter
-
   public async execAction(position: Position, vimState: VimState): Promise<IMovement> {
+    let cursorStartPos = new Position(
+      vimState.cursorStartPosition.line,
+      vimState.cursorStartPosition.character
+    );
+    // maintain current selection on failure
+    const failure = { start: cursorStartPos, stop: position, failed: true };
+
     // When the cursor is on a delimiter already, pre-advance the cursor,
     // so that our search does not fail. We always advance to the next argument,
     // in case of opening delimiters or regular delimiters, and advance to the
     // previous on closing delimiters.
-    let startPosition = position;
+    let leftSearchStartPosition = new Position(
+      vimState.cursorStartPosition.line,
+      vimState.cursorStartPosition.character
+    );
+    let rightSearchStartPosition = new Position(
+      vimState.cursorStartPosition.line,
+      vimState.cursorStartPosition.character
+    );
     if (
       SelectArgument.delimiters.includes(TextEditor.getCharAt(position)) ||
       SelectArgument.openingDelimiters.includes(TextEditor.getCharAt(position))
     ) {
-      startPosition = position.getRightThroughLineBreaks(true);
+      rightSearchStartPosition = position.getRightThroughLineBreaks(true);
     } else if (SelectArgument.closingDelimiters.includes(TextEditor.getCharAt(position))) {
-      startPosition = position.getLeftThroughLineBreaks(true);
+      leftSearchStartPosition = position.getLeftThroughLineBreaks(true);
     }
 
-    let leftDelimiterPosition = SelectInnerArgument.getLeftDelimiter(startPosition);
-    let rightDelimiterPosition = SelectInnerArgument.getRightDelimiter(startPosition);
+    const leftDelimiterPosition = SelectInnerArgument.getLeftDelimiter(leftSearchStartPosition);
+    const rightDelimiterPosition = SelectInnerArgument.getRightDelimiter(rightSearchStartPosition);
 
     if (leftDelimiterPosition === null || rightDelimiterPosition === null) {
-      return {
-        start: position,
-        stop: position,
-        failed: true,
-      };
+      return failure;
     }
 
+    let start: Position;
+    let stop: Position;
+
     if (this.selectAround) {
-      // Beware of edge case:
+      // Edge-case:
+      // Ensure we do not delete anything if we have an empty argument list, e.g. "()"
+      let isEmptyArgumentList =
+        leftDelimiterPosition.getRight().isEqual(rightDelimiterPosition) &&
+        SelectArgument.openingDelimiters.includes(TextEditor.getCharAt(leftDelimiterPosition)) &&
+        SelectArgument.closingDelimiters.includes(TextEditor.getCharAt(rightDelimiterPosition));
+      if (isEmptyArgumentList) {
+        return failure;
+      }
+
+      let cursorIsInLastArgument = SelectArgument.closingDelimiters.includes(
+        TextEditor.getCharAt(rightDelimiterPosition)
+      );
+
       // If we are on the right most argument, we delete the left delimiter
       // along with the argument.
       //
       // In any other case we delete the right delimiter.
-      let cursorIsInLastArgument = SelectArgument.closingDelimiters.includes(
-        TextEditor.getCharAt(rightDelimiterPosition)
-      );
       if (cursorIsInLastArgument) {
-        rightDelimiterPosition = rightDelimiterPosition.getLeftThroughLineBreaks(true);
-        leftDelimiterPosition = leftDelimiterPosition;
+        let thereIsOnlyOneArgument = SelectArgument.openingDelimiters.includes(
+          TextEditor.getCharAt(leftDelimiterPosition)
+        );
+
+        // It may be that there is only a single argument.
+        // In that case we need to inset the left position as well.
+        if (thereIsOnlyOneArgument) {
+          start = leftDelimiterPosition.getRightThroughLineBreaks(true);
+        } else {
+          start = leftDelimiterPosition;
+        }
+
+        stop = rightDelimiterPosition.getLeftThroughLineBreaks(true);
       } else {
-        rightDelimiterPosition = rightDelimiterPosition;
-        leftDelimiterPosition = leftDelimiterPosition.getRightThroughLineBreaks(true);
+        start = leftDelimiterPosition.getRightThroughLineBreaks(true);
+        stop = rightDelimiterPosition;
       }
     } else {
       // Multi-line UX-boost:
       // When the left delimiter is at the end of the line, we can skip over
       // to the next line. This pre-advance prevents the cursor staying
       // right behind the delimiter on the line above.
+      start = leftDelimiterPosition;
       if (leftDelimiterPosition.getRight().isLineEnd()) {
-        leftDelimiterPosition = leftDelimiterPosition.getRightThroughLineBreaks(true);
+        start = start.getRightThroughLineBreaks(true);
       }
-      leftDelimiterPosition = leftDelimiterPosition.getRightThroughLineBreaks(true);
-      rightDelimiterPosition = rightDelimiterPosition.getLeftThroughLineBreaks(true);
+      start = start.getRightThroughLineBreaks(true);
+      stop = rightDelimiterPosition.getLeftThroughLineBreaks(true);
     }
 
+    // Handle case when cursor is not inside the anticipated movement range
+    if (position.isBefore(start)) {
+      vimState.recordedState.operatorPositionDiff = start.subtract(position);
+    }
+    vimState.cursorStartPosition = start;
+
     return {
-      start: leftDelimiterPosition,
-      stop: rightDelimiterPosition,
+      start: start,
+      stop: stop,
     };
   }
 
